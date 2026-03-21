@@ -1,0 +1,10 @@
+// routes/auth.js
+const router = require('express').Router();
+const { login, getMe, getTodaySchedule } = require('../controllers/authController');
+const { authenticate } = require('../middlewares/auth');
+
+router.post('/login',          login);
+router.get('/me',              authenticate, getMe);
+router.get('/today-schedule',  authenticate, getTodaySchedule);
+
+module.exports = router;
