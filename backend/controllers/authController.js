@@ -11,9 +11,9 @@ const login = async (req, res, next) => {
     }
 
     const result = await query(
-      `SELECT u.*, 
+      `SELECT u.*,
         c.centre_code, c.centre_name, c.state, c.city,
-        s.server_code,
+        s.server_code, s.is_primary,
         z.zone_code, z.zone_name
        FROM users u
        LEFT JOIN centres c ON u.centre_id = c.id
@@ -48,6 +48,7 @@ const login = async (req, res, next) => {
         full_name:   user.full_name,
         role:        user.role,
         phone:       user.phone,
+        is_primary:  user.is_primary || false,   // ← critical field
         centre_id:   user.centre_id,
         centre_code: user.centre_code,
         centre_name: user.centre_name,
@@ -77,8 +78,26 @@ const getMe = async (req, res, next) => {
        WHERE u.id = $1`,
       [req.user.id]
     );
-    const user = result.rows[0];
-    res.json({ success: true, user });
+    const u = result.rows[0];
+    res.json({
+      success: true,
+      user: {
+        id:          u.id,
+        username:    u.username,
+        full_name:   u.full_name,
+        role:        u.role,
+        phone:       u.phone,
+        is_primary:  u.is_primary || false,   // ← critical field
+        centre_id:   u.centre_id,
+        centre_code: u.centre_code,
+        centre_name: u.centre_name,
+        server_id:   u.server_id,
+        server_code: u.server_code,
+        zone_id:     u.zone_id,
+        zone_code:   u.zone_code,
+        zone_name:   u.zone_name,
+      }
+    });
   } catch (err) {
     next(err);
   }
