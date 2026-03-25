@@ -5,8 +5,28 @@ const { getClient } = require('../config/db');
 
 const VALID_ROLES = ['master_admin','zone_admin','server_manager','event_manager','biometric_staff'];
 
+// ── Convert ANY date format to YYYY-MM-DD string ─────────────
+const toDateString = (val) => {
+  if (!val && val !== 0) return null;
+  if (typeof val === 'string') {
+    const s = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    if (!isNaN(d)) return d.toISOString().split('T')[0];
+    return null;
+  }
+  if (val instanceof Date) return val.toISOString().split('T')[0];
+  if (typeof val === 'number') {
+    // Excel serial number (e.g. 46104)
+    const base = new Date(1899, 11, 30);
+    base.setDate(base.getDate() + Math.floor(val));
+    return base.toISOString().split('T')[0];
+  }
+  return null;
+};
+
 const parseWorkbook = (filePath) => {
-  const workbook = XLSX.readFile(filePath);
+  const workbook = XLSX.readFile(filePath, { cellDates: false });
   const sheets = {};
   workbook.SheetNames.forEach(name => {
     sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '' });
@@ -18,7 +38,8 @@ const validateSheets = (sheets) => {
   const errors = {};
 
   if (sheets['Zones']) {
-    const errs = sheets['Zones'].flatMap((r, i) => {
+    const rows = sheets['Zones'].filter(r => r.zone_id?.toString().trim());
+    const errs = rows.flatMap((r, i) => {
       const e = [];
       if (!r.zone_id?.toString().trim())   e.push(`Row ${i+2}: zone_id is required`);
       if (!r.zone_name?.toString().trim()) e.push(`Row ${i+2}: zone_name is required`);
@@ -29,35 +50,36 @@ const validateSheets = (sheets) => {
   }
 
   if (sheets['Centres']) {
-    const errs = sheets['Centres'].flatMap((r, i) => {
+    const rows = sheets['Centres'].filter(r => r.centre_code?.toString().trim());
+    const errs = rows.flatMap((r, i) => {
       const e = [];
-      if (!r.zone_id?.toString().trim())       e.push(`Row ${i+2}: zone_id is required`);
-      if (!r.centre_code?.toString().trim())   e.push(`Row ${i+2}: centre_code is required`);
-      if (!r.centre_name?.toString().trim())   e.push(`Row ${i+2}: centre_name is required`);
-      if (!r.state?.toString().trim())         e.push(`Row ${i+2}: state is required`);
-      if (!r.city?.toString().trim())          e.push(`Row ${i+2}: city is required`);
+      if (!r.zone_id?.toString().trim())     e.push(`Row ${i+2}: zone_id is required`);
+      if (!r.centre_code?.toString().trim()) e.push(`Row ${i+2}: centre_code is required`);
+      if (!r.centre_name?.toString().trim()) e.push(`Row ${i+2}: centre_name is required`);
+      if (!r.state?.toString().trim())       e.push(`Row ${i+2}: state is required`);
+      if (!r.city?.toString().trim())        e.push(`Row ${i+2}: city is required`);
       const cap = parseInt(r.total_capacity);
-      if (isNaN(cap) || cap <= 0)              e.push(`Row ${i+2}: total_capacity must be a positive number`);
+      if (isNaN(cap) || cap <= 0)            e.push(`Row ${i+2}: total_capacity must be positive`);
       return e;
     });
     if (errs.length) errors['Centres'] = errs;
   }
 
   if (sheets['Servers']) {
+    const rows = sheets['Servers'].filter(r => r.server_code?.toString().trim());
     const seenPrimary = new Map();
-    const errs = sheets['Servers'].flatMap((r, i) => {
+    const errs = rows.flatMap((r, i) => {
       const e = [];
-      if (!r.centre_code?.toString().trim())  e.push(`Row ${i+2}: centre_code is required`);
-      if (!r.server_code?.toString().trim())  e.push(`Row ${i+2}: server_code is required`);
+      if (!r.centre_code?.toString().trim()) e.push(`Row ${i+2}: centre_code is required`);
+      if (!r.server_code?.toString().trim()) e.push(`Row ${i+2}: server_code is required`);
       const cap = parseInt(r.capacity);
-      if (isNaN(cap) || cap <= 0)             e.push(`Row ${i+2}: capacity must be a positive number`);
-      if (cap > 140)                          e.push(`Row ${i+2}: capacity ${cap} exceeds maximum of 140`);
-      const sc = r.server_code?.toString().trim().toUpperCase();
+      if (isNaN(cap) || cap <= 0)            e.push(`Row ${i+2}: capacity must be positive`);
+      if (cap > 140)                         e.push(`Row ${i+2}: capacity ${cap} exceeds max 140`);
       const cc = r.centre_code?.toString().trim().toUpperCase();
-      const isPrimary = sc?.endsWith('A') || r.primary_server?.toString().trim().toUpperCase() === 'YES';
+      const isPrimary = r.primary_server?.toString().trim().toUpperCase() === 'YES';
       if (isPrimary) {
         if (seenPrimary.has(cc)) e.push(`Row ${i+2}: Centre ${cc} already has a primary server`);
-        else seenPrimary.set(cc, sc);
+        else seenPrimary.set(cc, true);
       }
       return e;
     });
@@ -65,10 +87,12 @@ const validateSheets = (sheets) => {
   }
 
   if (sheets['Exam_Schedule']) {
-    const errs = sheets['Exam_Schedule'].flatMap((r, i) => {
+    const rows = sheets['Exam_Schedule'].filter(r => r.server_code?.toString().trim());
+    const errs = rows.flatMap((r, i) => {
       const e = [];
       if (!r.server_code?.toString().trim())  e.push(`Row ${i+2}: server_code is required`);
-      if (!r.exam_date?.toString().trim())    e.push(`Row ${i+2}: exam_date is required`);
+      const dateStr = toDateString(r.exam_date);
+      if (!dateStr) e.push(`Row ${i+2}: exam_date is invalid (use YYYY-MM-DD format)`);
       if (!r.section_code?.toString().trim()) e.push(`Row ${i+2}: section_code is required`);
       const et = r.exam_type?.toString().trim().toLowerCase();
       if (!['mock','live'].includes(et))      e.push(`Row ${i+2}: exam_type must be "mock" or "live"`);
@@ -78,13 +102,14 @@ const validateSheets = (sheets) => {
   }
 
   if (sheets['Users']) {
-    const errs = sheets['Users'].flatMap((r, i) => {
+    const rows = sheets['Users'].filter(r => r.username?.toString().trim());
+    const errs = rows.flatMap((r, i) => {
       const e = [];
       if (!r.username?.toString().trim()) e.push(`Row ${i+2}: username is required`);
       if (!r.password?.toString().trim()) e.push(`Row ${i+2}: password is required`);
       const role = r.role?.toString().trim().toLowerCase();
       if (!VALID_ROLES.includes(role)) {
-        e.push(`Row ${i+2}: invalid role "${role}". Must be one of: ${VALID_ROLES.join(', ')}`);
+        e.push(`Row ${i+2}: invalid role "${role}"`);
         return e;
       }
       if (role === 'server_manager'  && !r.server_code?.toString().trim()) e.push(`Row ${i+2}: server_manager requires server_code`);
@@ -116,16 +141,15 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
     // ── Zones ──────────────────────────────────────────────
     if (sheets['Zones']) {
       let inserted = 0, updated = 0;
-      for (const row of sheets['Zones']) {
-        const zone_code = row.zone_id?.toString().trim().toUpperCase();
-        const zone_name = row.zone_name?.toString().trim();
-        const state     = row.state?.toString().trim();
+      const rows   = sheets['Zones'].filter(r => r.zone_id?.toString().trim());
+      const unique = [...new Map(rows.map(r => [r.zone_id?.toString().trim().toUpperCase(), r])).values()];
+      for (const row of unique) {
         const r = await client.query(
           `INSERT INTO zones (zone_code, zone_name, state)
            VALUES ($1,$2,$3)
            ON CONFLICT (zone_code) DO UPDATE SET zone_name=$2, state=$3, updated_at=NOW()
            RETURNING (xmax=0) AS was_inserted`,
-          [zone_code, zone_name, state]
+          [row.zone_id.toString().trim().toUpperCase(), row.zone_name.toString().trim(), row.state.toString().trim()]
         );
         r.rows[0]?.was_inserted ? inserted++ : updated++;
       }
@@ -135,7 +159,8 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
     // ── Centres ────────────────────────────────────────────
     if (sheets['Centres']) {
       let inserted = 0, updated = 0, skipped = 0;
-      for (const row of sheets['Centres']) {
+      const rows = sheets['Centres'].filter(r => r.centre_code?.toString().trim());
+      for (const row of rows) {
         const zone_code   = row.zone_id?.toString().trim().toUpperCase();
         const centre_code = row.centre_code?.toString().trim().toUpperCase();
         const zr = await client.query('SELECT id FROM zones WHERE zone_code=$1', [zone_code]);
@@ -159,11 +184,12 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
     // ── Servers ────────────────────────────────────────────
     if (sheets['Servers']) {
       let inserted = 0, updated = 0, skipped = 0;
-      for (const row of sheets['Servers']) {
+      const rows = sheets['Servers'].filter(r => r.server_code?.toString().trim());
+      for (const row of rows) {
         const server_code = row.server_code?.toString().trim().toUpperCase();
         const centre_code = row.centre_code?.toString().trim().toUpperCase();
         const capacity    = parseInt(row.capacity) || 0;
-        const is_primary  = server_code.endsWith('A') || row.primary_server?.toString().trim().toUpperCase() === 'YES';
+        const is_primary  = row.primary_server?.toString().trim().toUpperCase() === 'YES';
         if (capacity > 140) { skipped++; continue; }
         const cr = await client.query('SELECT id FROM centres WHERE centre_code=$1', [centre_code]);
         if (!cr.rows[0]) { skipped++; continue; }
@@ -185,16 +211,19 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
     // ── Exam Schedule ──────────────────────────────────────
     if (sheets['Exam_Schedule']) {
       let inserted = 0, skipped = 0;
-      for (const row of sheets['Exam_Schedule']) {
+      const rows = sheets['Exam_Schedule'].filter(r => r.server_code?.toString().trim());
+      for (const row of rows) {
         const server_code  = row.server_code?.toString().trim().toUpperCase();
         const section_code = row.section_code?.toString().trim().toUpperCase();
-        const exam_date    = row.exam_date?.toString().trim();
+        const exam_date    = toDateString(row.exam_date);  // ← auto convert any format
         const exam_type    = row.exam_type?.toString().trim().toLowerCase() === 'mock' ? 'mock' : 'live';
+        if (!exam_date) { skipped++; continue; }
         const sr = await client.query('SELECT id FROM servers WHERE server_code=$1', [server_code]);
         if (!sr.rows[0]) { skipped++; continue; }
         await client.query(
           `INSERT INTO session_schedule (server_id, exam_date, section_code, exam_type)
-           VALUES ($1,$2,$3,$4) ON CONFLICT (server_id, exam_date, section_code) DO UPDATE SET exam_type=$4`,
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT (server_id, exam_date, section_code) DO UPDATE SET exam_type=$4`,
           [sr.rows[0].id, exam_date, section_code, exam_type]
         );
         inserted++;
@@ -205,25 +234,28 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
     // ── Users ──────────────────────────────────────────────
     if (sheets['Users']) {
       let inserted = 0, updated = 0, skipped = 0;
-      for (const row of sheets['Users']) {
+      const rows = sheets['Users'].filter(r => r.username?.toString().trim());
+      for (const row of rows) {
         const username = row.username?.toString().trim().toUpperCase();
         const role     = row.role?.toString().trim().toLowerCase();
         const password = row.password?.toString().trim();
         if (!username || !role || !password) { skipped++; continue; }
-        const salt          = await bcrypt.genSalt(10);
-        const password_hash = await bcrypt.hash(password, salt);
+        const password_hash = await bcrypt.hash(password, 10);
 
         let centre_id = null, server_id = null, zone_id = null;
-        if (role === 'server_manager' && row.server_code) {
-          const sr = await client.query('SELECT id, centre_id FROM servers WHERE server_code=$1', [row.server_code.toString().trim().toUpperCase()]);
+        if (role === 'server_manager' && row.server_code?.toString().trim()) {
+          const sr = await client.query('SELECT id, centre_id FROM servers WHERE server_code=$1',
+            [row.server_code.toString().trim().toUpperCase()]);
           if (sr.rows[0]) { server_id = sr.rows[0].id; centre_id = sr.rows[0].centre_id; }
         }
-        if (['event_manager','biometric_staff'].includes(role) && row.centre_code) {
-          const cr = await client.query('SELECT id FROM centres WHERE centre_code=$1', [row.centre_code.toString().trim().toUpperCase()]);
+        if (['event_manager','biometric_staff'].includes(role) && row.centre_code?.toString().trim()) {
+          const cr = await client.query('SELECT id FROM centres WHERE centre_code=$1',
+            [row.centre_code.toString().trim().toUpperCase()]);
           centre_id = cr.rows[0]?.id || null;
         }
-        if (role === 'zone_admin' && row.zone_id) {
-          const zr = await client.query('SELECT id FROM zones WHERE zone_code=$1', [row.zone_id.toString().trim().toUpperCase()]);
+        if (role === 'zone_admin' && row.zone_id?.toString().trim()) {
+          const zr = await client.query('SELECT id FROM zones WHERE zone_code=$1',
+            [row.zone_id.toString().trim().toUpperCase()]);
           zone_id = zr.rows[0]?.id || null;
         }
 
@@ -233,14 +265,14 @@ const importFromExcel = async (filePath, importedByUserId = null) => {
            ON CONFLICT (username) DO UPDATE SET
              password_hash=$2, full_name=$3, role=$4, centre_id=$5, server_id=$6, zone_id=$7, phone=$8, updated_at=NOW()
            RETURNING (xmax=0) AS was_inserted`,
-          [username, password_hash, row.full_name?.toString().trim() || username, role, centre_id, server_id, zone_id, row.phone?.toString().trim() || null]
+          [username, password_hash, row.full_name?.toString().trim() || username,
+           role, centre_id, server_id, zone_id, row.phone?.toString().trim() || null]
         );
         r.rows[0]?.was_inserted ? inserted++ : updated++;
       }
       summary.users = { inserted, updated, skipped };
     }
 
-    // ── Import log ─────────────────────────────────────────
     await client.query(
       `INSERT INTO import_log (imported_by, filename, status, summary) VALUES ($1,$2,'success',$3)`,
       [importedByUserId, filePath.split('/').pop(), JSON.stringify(summary)]
