@@ -2,9 +2,11 @@
 import { format } from 'date-fns'
 
 export const today = () => format(new Date(), 'yyyy-MM-dd')
-export const fmtDate = (d) => d ? format(new Date(d), 'dd MMM yyyy') : '—'
-export const fmtTime = (d) => d ? format(new Date(d), 'hh:mm a') : '—'
-export const fmtDateTime = (d) => d ? format(new Date(d), 'dd MMM yyyy, hh:mm a') : '—'
+
+// Display format DD-MM-YYYY throughout UI
+export const fmtDate     = (d) => d ? format(new Date(d), 'dd-MM-yyyy') : '—'
+export const fmtTime     = (d) => d ? format(new Date(d), 'hh:mm a') : '—'
+export const fmtDateTime = (d) => d ? format(new Date(d), 'dd-MM-yyyy, hh:mm a') : '—'
 
 export const downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob)
