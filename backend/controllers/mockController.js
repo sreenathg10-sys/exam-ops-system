@@ -1,15 +1,16 @@
 // controllers/mockController.js
-const { query }            = require('../config/db');
-const { uploadToSupabase } = require('../services/storageService');
-const fs   = require('fs');
-const path = require('path');
+const { query }            = require('../config/db')
+const { uploadToSupabase } = require('../services/storageService')
+const path = require('path')
 
 // POST submit mock checklist (Primary SM only)
 const submitChecklist = async (req, res, next) => {
   try {
-    const today  = new Date().toISOString().split('T')[0];
-    const centre_id = req.user.centre_id;
-    if (!centre_id) return res.status(400).json({ success: false, message: 'No centre assigned to user' });
+    const today     = new Date().toISOString().split('T')[0]
+    const centre_id = req.user.centre_id
+    if (!centre_id) {
+      return res.status(400).json({ success: false, message: 'No centre assigned to user' })
+    }
 
     const {
       centre_name_verified, centre_address_verified,
@@ -17,7 +18,7 @@ const submitChecklist = async (req, res, next) => {
       cctv_available, cctv_working, ups_available, dg_available, partition_available,
       drinking_water, parking_available, centre_clean, restrooms_available,
       final_remarks,
-    } = req.body;
+    } = req.body
 
     await query(
       `INSERT INTO mock_checklist (
@@ -42,66 +43,66 @@ const submitChecklist = async (req, res, next) => {
         drinking_water, parking_available, centre_clean, restrooms_available,
         final_remarks,
       ]
-    );
+    )
 
-    res.json({ success: true, message: 'Mock checklist submitted' });
-  } catch (err) { next(err); }
-};
+    res.json({ success: true, message: 'Mock checklist submitted' })
+  } catch (err) { next(err) }
+}
 
-// GET mock checklist for a centre
+// GET mock checklist
 const getChecklist = async (req, res, next) => {
   try {
-    const { centre_code } = req.params;
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const { centre_code } = req.params
+    const date = req.query.date || new Date().toISOString().split('T')[0]
     const result = await query(
       `SELECT mc.* FROM mock_checklist mc
        JOIN centres c ON mc.centre_id = c.id
        WHERE c.centre_code = $1 AND mc.exam_date = $2`,
       [centre_code, date]
-    );
-    res.json({ success: true, checklist: result.rows[0] || null });
-  } catch (err) { next(err); }
-};
+    )
+    res.json({ success: true, checklist: result.rows[0] || null })
+  } catch (err) { next(err) }
+}
 
-// POST upload mock photos (Primary SM only)
+// POST upload mock photo — uses buffer from memoryStorage
 const uploadPhotos = async (req, res, next) => {
   try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ success: false, message: 'No photos uploaded' });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No photo uploaded' })
     }
 
-    const today     = new Date().toISOString().split('T')[0];
-    const centre_id = req.user.centre_id;
-    const { photo_type } = req.body;
+    const today     = new Date().toISOString().split('T')[0]
+    const centre_id = req.user.centre_id
+    const { photo_type } = req.body
 
     if (!photo_type || !['centre','lab1','lab2','cctv','network'].includes(photo_type)) {
-      return res.status(400).json({ success: false, message: 'Invalid photo_type. Must be: centre, lab1, lab2, cctv, network' });
+      return res.status(400).json({ success: false, message: 'Invalid photo_type. Must be: centre, lab1, lab2, cctv, network' })
     }
 
-    const file        = req.files[0] || req.file;
-    const storagePath = `mock-photos/${centre_id}_${today}_${photo_type}${path.extname(file.originalname)}`;
-    const url         = await uploadToSupabase(file.path, storagePath);
-    fs.unlinkSync(file.path);
+    const ext         = path.extname(req.file.originalname).toLowerCase() || '.jpg'
+    const mimetype    = req.file.mimetype || 'image/jpeg'
+    const storagePath = `mock-photos/${centre_id}_${today}_${photo_type}${ext}`
+
+    // Upload buffer directly
+    const url = await uploadToSupabase(req.file.buffer, storagePath, mimetype)
 
     await query(
       `INSERT INTO mock_photos (centre_id, user_id, exam_date, photo_type, photo_url)
        VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (centre_id, exam_date, photo_type) DO UPDATE SET photo_url=$5, uploaded_at=NOW()`,
+       ON CONFLICT (centre_id, exam_date, photo_type)
+       DO UPDATE SET photo_url = $5, uploaded_at = NOW()`,
       [centre_id, req.user.id, today, photo_type, url]
-    );
+    )
 
-    res.json({ success: true, message: `${photo_type} photo uploaded`, url });
-  } catch (err) {
-    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    next(err);
-  }
-};
+    res.json({ success: true, message: `${photo_type} photo uploaded`, url })
+  } catch (err) { next(err) }
+}
 
-// GET mock photos for a centre
+// GET mock photos
 const getPhotos = async (req, res, next) => {
   try {
-    const { centre_code } = req.params;
-    const date = req.query.date || new Date().toISOString().split('T')[0];
+    const { centre_code } = req.params
+    const date = req.query.date || new Date().toISOString().split('T')[0]
     const result = await query(
       `SELECT mp.photo_type, mp.photo_url, mp.uploaded_at
        FROM mock_photos mp
@@ -109,9 +110,9 @@ const getPhotos = async (req, res, next) => {
        WHERE c.centre_code = $1 AND mp.exam_date = $2
        ORDER BY mp.photo_type`,
       [centre_code, date]
-    );
-    res.json({ success: true, photos: result.rows });
-  } catch (err) { next(err); }
-};
+    )
+    res.json({ success: true, photos: result.rows })
+  } catch (err) { next(err) }
+}
 
-module.exports = { submitChecklist, getChecklist, uploadPhotos, getPhotos };
+module.exports = { submitChecklist, getChecklist, uploadPhotos, getPhotos }
