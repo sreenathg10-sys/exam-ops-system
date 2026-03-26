@@ -14,17 +14,23 @@ import { CheckCircle as Check, ClipboardList, Zap, AlertTriangle } from 'lucide-
 
 export default function StaffPage() {
   const { user }  = useAuth()
+  const selfieInputRef = useRef(null)
+
   const [schedule,    setSchedule]    = useState(null)
   const [attendance,  setAttendance]  = useState(null)
   const [activeTab,   setActiveTab]   = useState('attendance')
   const [loading,     setLoading]     = useState(true)
   const [submitting,  setSubmitting]  = useState(false)
+  const [selfieLoading, setSelfieLoading] = useState(false)
   const [liveChecklistSaved, setLiveChecklistSaved] = useState(false)
   const [liveForm, setLiveForm] = useState({
-    security_reached: null, security_male_count: '', security_female_count: '', hhmd_available: null, remarks: ''
+    security_reached: null,
+    security_male_count: '',
+    security_female_count: '',
+    hhmd_available: null,
+    remarks: ''
   })
 
-  // is_primary comes from the me endpoint
   const isPrimarySM = user?.role === 'server_manager' && user?.is_primary === true
 
   useEffect(() => { loadData() }, [])
@@ -44,7 +50,6 @@ export default function StaffPage() {
 
   const examType = schedule?.exam_type || null
 
-  // ── Tab definitions based on role + exam type ──────────────
   const getTabs = () => {
     if (isPrimarySM) {
       if (examType === 'mock') return [
@@ -58,15 +63,11 @@ export default function StaffPage() {
         { id: 'issues',     label: 'Report Issue', icon: AlertTriangle },
       ]
     }
-    // Non-primary SM — live session tab on live day
-    if (user?.role === 'server_manager' && !isPrimarySM) {
-      if (examType === 'live') return [
-        { id: 'attendance', label: 'Attendance',   icon: Check },
-        { id: 'live',       label: 'Live Session', icon: Zap },
-        { id: 'issues',     label: 'Report Issue', icon: AlertTriangle },
-      ]
-    }
-    // EM, Bio Staff, non-primary SM on mock day — attendance + issues only
+    if (user?.role === 'server_manager' && !isPrimarySM && examType === 'live') return [
+      { id: 'attendance', label: 'Attendance',   icon: Check },
+      { id: 'live',       label: 'Live Session', icon: Zap },
+      { id: 'issues',     label: 'Report Issue', icon: AlertTriangle },
+    ]
     return [
       { id: 'attendance', label: 'Attendance',   icon: Check },
       { id: 'issues',     label: 'Report Issue', icon: AlertTriangle },
@@ -93,16 +94,24 @@ export default function StaffPage() {
     } finally { setSubmitting(false) }
   }
 
-  const handleSelfie = async (file) => {
+  // Selfie handler - called when file input changes
+  const handleSelfieChange = async (e) => {
+    const file = e.target.files?.[0]
     if (!file) return
-    setSubmitting(true)
+
+    setSelfieLoading(true)
     try {
       await attendanceAPI.uploadSelfie(file)
       toast.success('Selfie uploaded!')
       loadData()
-    } catch (e) {
-      toast.error('Selfie upload failed')
-    } finally { setSubmitting(false) }
+    } catch (err) {
+      console.error('Selfie error:', err)
+      toast.error(err.response?.data?.message || 'Selfie upload failed. Please try again.')
+    } finally {
+      setSelfieLoading(false)
+      // Reset input so same file can be selected again if needed
+      if (selfieInputRef.current) selfieInputRef.current.value = ''
+    }
   }
 
   const handleGeo = async () => {
@@ -153,6 +162,7 @@ export default function StaffPage() {
   return (
     <Layout>
       <div className="max-w-lg mx-auto">
+
         {/* Header */}
         <div className={`rounded-2xl p-4 mb-4 text-white ${
           examType === 'live' ? 'bg-red-700' : examType === 'mock' ? 'bg-blue-800' : 'bg-gray-700'
@@ -188,9 +198,10 @@ export default function StaffPage() {
           ))}
         </div>
 
-        {/* ── ATTENDANCE TAB ── */}
+        {/* ATTENDANCE TAB */}
         {activeTab === 'attendance' && (
           <div className="space-y-3">
+
             {/* Step 1 — Reported */}
             <div className="card p-4">
               <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Step 1 — Arrival</div>
@@ -220,30 +231,53 @@ export default function StaffPage() {
             <div className="card p-4">
               <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Step 2 — Attendance</div>
               <div className="grid grid-cols-2 gap-3">
-                {/* Selfie */}
-                <label className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-4 cursor-pointer transition-all ${
-                  attendance?.selfie_url ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
-                }`}>
-                  <input type="file" accept="image/*" capture="user" className="hidden"
-                    onChange={e => handleSelfie(e.target.files[0])} />
-                  {attendance?.selfie_url ? (
+
+                {/* Selfie - using ref for better mobile control */}
+                <div
+                  onClick={() => !selfieLoading && !attendance?.selfie_url && selfieInputRef.current?.click()}
+                  className={`relative flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-4 transition-all ${
+                    attendance?.selfie_url
+                      ? 'border-green-400 bg-green-50'
+                      : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50 cursor-pointer active:bg-blue-100'
+                  }`}
+                >
+                  {/* Hidden file input - no capture attribute to allow gallery too */}
+                  <input
+                    ref={selfieInputRef}
+                    type="file"
+                    accept="image/*,image/heic,image/heif"
+                    className="hidden"
+                    onChange={handleSelfieChange}
+                  />
+                  {selfieLoading ? (
+                    <>
+                      <Spinner size="sm" />
+                      <span className="text-xs text-gray-500 mt-2">Uploading...</span>
+                    </>
+                  ) : attendance?.selfie_url ? (
                     <>
                       <img src={attendance.selfie_url} alt="selfie" className="h-16 w-16 rounded-full object-cover" />
                       <CheckCircle className="h-4 w-4 text-green-600 mt-2" />
+                      <span className="text-xs text-green-700 mt-1">Uploaded</span>
                     </>
                   ) : (
                     <>
                       <Camera className="h-8 w-8 text-gray-300 mb-2" />
-                      <span className="text-xs text-gray-500">Take Selfie</span>
+                      <span className="text-xs text-gray-500 text-center">Tap to take selfie</span>
                     </>
                   )}
-                </label>
+                </div>
 
                 {/* Geo */}
-                <button onClick={handleGeo} disabled={submitting || !!attendance?.geo_lat}
+                <button
+                  onClick={handleGeo}
+                  disabled={submitting || !!attendance?.geo_lat}
                   className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-4 transition-all ${
-                    attendance?.geo_lat ? 'border-green-400 bg-green-50' : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
-                  } disabled:cursor-not-allowed`}>
+                    attendance?.geo_lat
+                      ? 'border-green-400 bg-green-50'
+                      : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50'
+                  } disabled:cursor-not-allowed`}
+                >
                   {attendance?.geo_lat ? (
                     <>
                       <CheckCircle className="h-8 w-8 text-green-600 mb-2" />
@@ -259,7 +293,7 @@ export default function StaffPage() {
               </div>
             </div>
 
-            {/* Step 3 — Live checklist for Primary SM on live day */}
+            {/* Step 3 — Live checklist for Primary SM */}
             {isPrimarySM && examType === 'live' && (
               <div className="card p-4 space-y-4">
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Step 3 — Security & Equipment</div>
@@ -286,7 +320,7 @@ export default function StaffPage() {
                 <div>
                   <label className="label">Remarks</label>
                   <textarea className="input h-16 resize-none" value={liveForm.remarks}
-                    onChange={e => setLiveForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Optional…" />
+                    onChange={e => setLiveForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Optional..." />
                 </div>
                 {!liveChecklistSaved ? (
                   <button onClick={handleSaveLiveChecklist} disabled={submitting} className="btn-danger w-full">
@@ -303,7 +337,8 @@ export default function StaffPage() {
 
             {/* Submit attendance */}
             {!attendance?.is_submitted ? (
-              <button onClick={handleSubmitAttendance}
+              <button
+                onClick={handleSubmitAttendance}
                 disabled={submitting || !attendance?.reported_at || !attendance?.selfie_url || !attendance?.geo_lat}
                 className={`w-full py-3 rounded-xl font-bold text-white transition-all ${
                   examType === 'live' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-700 hover:bg-blue-800'
@@ -319,14 +354,15 @@ export default function StaffPage() {
           </div>
         )}
 
-        {/* ── MOCK TAB (Primary SM only) ── */}
+        {/* MOCK TAB */}
         {activeTab === 'mock' && isPrimarySM && <MockChecklistTab user={user} />}
 
-        {/* ── LIVE SESSION TAB (Primary SM + non-primary SM) ── */}
+        {/* LIVE TAB */}
         {activeTab === 'live' && user?.role === 'server_manager' && <LiveSessionTab user={user} />}
 
-        {/* ── ISSUES TAB ── */}
+        {/* ISSUES TAB */}
         {activeTab === 'issues' && <ReportIssueTab user={user} examType={examType} />}
+
       </div>
     </Layout>
   )
